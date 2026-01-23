@@ -36,3 +36,4 @@ A volume-specific monitor for outbound digital assets.
 
 * **Inventory Outflow:** Specifically counts how many NFTs (ERC-721 and ERC-1155) leave the wallet daily.
 * **Sales Momentum:** Useful for tracking selling streaks and total lifetime inventory moved.
+<img width="3734" height="4181" alt="dune-base-wallet" src="https://github.com/user-attachments/assets/08d450c7-8d51-4cd2-8a1b-45663967345e" />
