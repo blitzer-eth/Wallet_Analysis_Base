@@ -45,4 +45,5 @@ A leaderboard of the wallet's most successful investments.
 * **Item Tracking:** Shows the total count of items sold within each collection to distinguish between "moonshots" and volume trading.
 * **Direct Access:** Integrated deep links to **OpenSea** and **Basescan** for immediate collection verification.
 
+## :camera_flash: Snapshot 
 <img width="3734" height="5221" alt="dune-base-wallet" src="https://github.com/user-attachments/assets/1064d116-3423-48d6-9fd9-1f46e7c58be9" />
