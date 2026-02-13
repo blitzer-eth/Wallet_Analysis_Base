@@ -6,6 +6,13 @@ This dashboard provides a comprehensive technical and financial overview of any 
 
 The dashboard is designed to transform raw on-chain data into actionable insights, specifically for NFT traders and active network users. It provides a real-time view of portfolio health and activity levels using five core modules.
 
+---
+
+## :camera_flash: Snapshot 
+<img width="3734" height="5221" alt="dune-base-wallet" src="https://github.com/user-attachments/assets/1064d116-3423-48d6-9fd9-1f46e7c58be9" />
+
+---
+
 ## 🔍 Query Breakdown
 
 ### 1. Gas Spend Counter
@@ -44,6 +51,3 @@ A leaderboard of the wallet's most successful investments.
 * **Profit Ranking:** Identifies which collections have generated the highest realized ETH returns.
 * **Item Tracking:** Shows the total count of items sold within each collection to distinguish between "moonshots" and volume trading.
 * **Direct Access:** Integrated deep links to **OpenSea** and **Basescan** for immediate collection verification.
-
-## :camera_flash: Snapshot 
-<img width="3734" height="5221" alt="dune-base-wallet" src="https://github.com/user-attachments/assets/1064d116-3423-48d6-9fd9-1f46e7c58be9" />
