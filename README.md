@@ -44,10 +44,18 @@ Tracks the financial performance of NFT flips and acquisitions over time.
 * **Multi-Asset:** Automatically handles trades made in **ETH, WETH, and USDC**.
 * **Signed Flow:** Buy orders are displayed as negative values, while sales are positive.
 
-### 5. Top NFT Collection Profits
+### 5. Top NFT Collection Profit
 
 A leaderboard of the wallet's most successful investments.
 
 * **Profit Ranking:** Identifies which collections have generated the highest realized ETH returns.
 * **Item Tracking:** Shows the total count of items sold within each collection to distinguish between "moonshots" and volume trading.
+* **Direct Access:** Integrated deep links to **OpenSea** and **Basescan** for immediate collection verification.
+
+### 6. Top NFT Collection Loss
+
+A leaderboard highlighting the wallet's least successful NFT investments.
+
+* **Loss Ranking:** Identifies which collections have resulted in the highest realized ETH losses.
+* **Item Tracking:** Shows the total count of items sold within each collection to analyze the scope of the underperforming assets.
 * **Direct Access:** Integrated deep links to **OpenSea** and **Basescan** for immediate collection verification.
