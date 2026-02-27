@@ -9,7 +9,7 @@ The dashboard is designed to transform raw on-chain data into actionable insight
 ---
 
 ## :camera_flash: Snapshot 
-<img width="3734" height="6212" alt="dune-base-wallet" src="https://github.com/user-attachments/assets/a8262795-7dee-426e-82e9-e4dd385adc47" />
+<img width="3734" height="6764" alt="image" src="https://github.com/user-attachments/assets/b7626065-8c62-4491-925f-4c2f105029ec" />
 
 ---
 
@@ -59,3 +59,11 @@ A leaderboard highlighting the wallet's least successful NFT investments.
 * **Loss Ranking:** Identifies which collections have resulted in the highest realized ETH losses.
 * **Item Tracking:** Shows the total count of items sold within each collection to analyze the scope of the underperforming assets.
 * **Direct Access:** Integrated deep links to **OpenSea** and **Basescan** for immediate collection verification.
+
+### 6. Top Interacted Counterparties
+
+Analyzes the most frequent addresses the wallet interacts with on the network.
+
+* **Interaction Volume:** Counts the total number of transactions sent to or received from specific smart contracts or addresses.
+* **Gas Impact:** Calculates the total ETH spent on network fees specifically for interacting with each counterparty.
+* **Timeline Tracking:** Logs the precise timestamps of the first and most recent interactions to show relationship longevity.
