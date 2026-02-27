@@ -9,7 +9,7 @@ The dashboard is designed to transform raw on-chain data into actionable insight
 ---
 
 ## :camera_flash: Snapshot 
-<img width="3734" height="5221" alt="dune-base-wallet" src="https://github.com/user-attachments/assets/1064d116-3423-48d6-9fd9-1f46e7c58be9" />
+<img width="3734" height="6212" alt="dune-base-wallet" src="https://github.com/user-attachments/assets/a8262795-7dee-426e-82e9-e4dd385adc47" />
 
 ---
 
