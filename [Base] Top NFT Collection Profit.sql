@@ -15,19 +15,41 @@ address AS (
   SELECT FROM_HEX(REPLACE('{{wallet address:}}', '0x', '')) AS addr
 ),
 
+eth_prices AS (
+    SELECT 
+        minute,
+        price AS eth_usd_price
+    FROM prices.usd
+    WHERE blockchain = 'base'
+    AND symbol = 'WETH'
+    AND minute >= (SELECT start_date FROM time_filter)
+),
+
 trades_raw AS (
   SELECT 
     t.nft_contract_address,
     t.token_id,
     t.block_time,
-    t.amount_original AS amount_eth,
+    (t.amount_usd / NULLIF(ep.eth_usd_price, 0)) AS amount_eth,
     CASE WHEN t.seller = (SELECT addr FROM address) THEN 'SELL' ELSE 'BUY' END AS direction
   FROM nft.trades t
+  LEFT JOIN eth_prices ep ON ep.minute = DATE_TRUNC('minute', t.block_time)
   CROSS JOIN address
   CROSS JOIN time_filter
   WHERE t.blockchain = 'base'
     AND (t.seller = addr OR t.buyer = addr)
     AND t.block_time >= time_filter.start_date
+),
+
+numbered_trades AS (
+  SELECT 
+    nft_contract_address,
+    token_id,
+    block_time,
+    amount_eth,
+    direction,
+    ROW_NUMBER() OVER (PARTITION BY nft_contract_address, token_id, direction ORDER BY block_time ASC) AS rn
+  FROM trades_raw
 ),
 
 realized_pnl AS (
@@ -38,9 +60,10 @@ realized_pnl AS (
     s.amount_eth AS sell_price_eth,
     s.block_time AS sold_at,
     (s.amount_eth - b.amount_eth) AS profit_eth
-  FROM trades_raw b
-  INNER JOIN trades_raw s ON b.nft_contract_address = s.nft_contract_address 
+  FROM numbered_trades b
+  INNER JOIN numbered_trades s ON b.nft_contract_address = s.nft_contract_address 
     AND b.token_id = s.token_id
+    AND b.rn = s.rn
     AND b.direction = 'BUY' 
     AND s.direction = 'SELL'
     AND s.block_time > b.block_time
