@@ -39,7 +39,8 @@ trades_raw AS (
         ELSE -(t.amount_usd / NULLIF(ep.eth_usd_price, 0)) 
      END) AS amount_eth,
     t.amount_usd,
-    COALESCE(p.symbol, 'ETH') AS original_currency
+    COALESCE(p.symbol, 'ETH') AS original_currency,
+    COUNT(*) OVER (PARTITION BY t.tx_hash) AS trades_in_tx
   FROM nft.trades t
   LEFT JOIN tokens.erc20 p ON p.contract_address = t.currency_contract AND p.blockchain = 'base'
   LEFT JOIN eth_prices ep ON ep.minute = DATE_TRUNC('minute', t.block_time)
@@ -69,11 +70,11 @@ final_output AS (
     tr.marketplace,
     tr.direction,
     tr.amount_eth,
-    COALESCE(g.gas_eth, 0) AS gas_eth_spent,
-    tr.amount_eth - COALESCE(g.gas_eth, 0) AS net_eth_flow,
+    COALESCE(g.gas_eth, 0) / tr.trades_in_tx AS gas_eth_spent,
+    tr.amount_eth - (COALESCE(g.gas_eth, 0) / tr.trades_in_tx) AS net_eth_flow,
     -- Totals
-    SUM(tr.amount_eth - COALESCE(g.gas_eth, 0)) OVER (PARTITION BY tr.day) AS daily_eth_pnl,
-    SUM(tr.amount_eth - COALESCE(g.gas_eth, 0)) OVER (ORDER BY tr.time) AS cumulative_eth_pnl,
+    SUM(tr.amount_eth - (COALESCE(g.gas_eth, 0) / tr.trades_in_tx)) OVER (PARTITION BY tr.day) AS daily_eth_pnl,
+    SUM(tr.amount_eth - (COALESCE(g.gas_eth, 0) / tr.trades_in_tx)) OVER (ORDER BY tr.time) AS cumulative_eth_pnl,
     tr.nft_contract_address,
     tr.token_id,
     tr.original_currency,
