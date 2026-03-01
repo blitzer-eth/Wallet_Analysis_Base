@@ -40,6 +40,7 @@ trades_raw AS (
      END) AS amount_eth,
     t.amount_usd,
     COALESCE(p.symbol, 'ETH') AS original_currency,
+    -- Count how many trades are in this single transaction hash
     COUNT(*) OVER (PARTITION BY t.tx_hash) AS trades_in_tx
   FROM nft.trades t
   LEFT JOIN tokens.erc20 p ON p.contract_address = t.currency_contract AND p.blockchain = 'base'
@@ -70,6 +71,7 @@ final_output AS (
     tr.marketplace,
     tr.direction,
     tr.amount_eth,
+    -- Divide the total gas by the number of items in the tx to prevent double counting
     COALESCE(g.gas_eth, 0) / tr.trades_in_tx AS gas_eth_spent,
     tr.amount_eth - (COALESCE(g.gas_eth, 0) / tr.trades_in_tx) AS net_eth_flow,
     -- Totals
@@ -83,4 +85,10 @@ final_output AS (
   LEFT JOIN tx_gas g ON g.tx_hash = tr.tx_hash
 )
 
-SELECT * FROM final_output ORDER BY time DESC;
+SELECT 
+  *,
+  -- Split positive and negative values into their own columns for charting
+  CASE WHEN daily_eth_pnl > 0 THEN daily_eth_pnl ELSE 0 END AS daily_profit_eth,
+  CASE WHEN daily_eth_pnl < 0 THEN daily_eth_pnl ELSE 0 END AS daily_loss_eth
+FROM final_output 
+ORDER BY time DESC;
