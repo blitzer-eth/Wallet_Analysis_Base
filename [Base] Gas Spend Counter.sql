@@ -1,51 +1,81 @@
-WITH 
-time_filter AS (
-  SELECT 
-    CASE 
-      WHEN '{{Time Period}}' = 'Past Week'     THEN CURRENT_DATE - INTERVAL '7' day
-      WHEN '{{Time Period}}' = 'Past Month'    THEN CURRENT_DATE - INTERVAL '1' month
-      WHEN '{{Time Period}}' = 'Past 3 Months' THEN CURRENT_DATE - INTERVAL '3' month
-      WHEN '{{Time Period}}' = 'Past Year'     THEN CURRENT_DATE - INTERVAL '1' year
-      WHEN '{{Time Period}}' = 'All Time'      THEN CAST('2023-06-15' AS DATE)
-      ELSE CURRENT_DATE - INTERVAL '30' day
-    END AS start_date
+/*
+ * Query: [Base] Gas Spend Counter
+ *
+ * Purpose:
+ *   Calculate the daily and cumulative transaction fees paid by one
+ *   wallet on Base.
+ *
+ * Parameters:
+ *   {{wallet address:}}
+ *       EVM wallet address, configured as a typed free-form parameter.
+ *
+ *   {{Time Period}}
+ *       Manual-list parameter with the following allowed values:
+ *       - Past Week
+ *       - Past Month
+ *       - Past 3 Months
+ *       - Past Year
+ *       - All Time
+ *
+ * Performance:
+ *   Filters all partition columns before aggregation to minimize the
+ *   amount of transaction-level data scanned.
+ */
+
+WITH query_parameters AS (
+    SELECT
+        FROM_HEX(
+            LOWER(
+                REPLACE('{{wallet address:}}', '0x', '')
+            )
+        ) AS wallet_address,
+
+        CAST(
+            CASE '{{Time Period}}'
+                WHEN 'Past Week'
+                    THEN CURRENT_DATE - INTERVAL '7' DAY
+                WHEN 'Past Month'
+                    THEN CURRENT_DATE - INTERVAL '1' MONTH
+                WHEN 'Past 3 Months'
+                    THEN CURRENT_DATE - INTERVAL '3' MONTH
+                WHEN 'Past Year'
+                    THEN CURRENT_DATE - INTERVAL '1' YEAR
+                WHEN 'All Time'
+                    THEN DATE '2023-06-15'
+                ELSE CURRENT_DATE - INTERVAL '30' DAY
+            END AS DATE
+        ) AS start_date
 ),
 
-input_wallet AS (
-  SELECT FROM_HEX(LOWER(REPLACE('{{wallet address:}}', '0x', ''))) AS address
+daily_gas_spend AS (
+    SELECT
+        fees.block_date AS day,
+        SUM(fees.tx_fee) AS daily_gas_eth
+    FROM gas.fees AS fees
+    CROSS JOIN query_parameters AS parameters
+    WHERE fees.blockchain = 'base'
+        AND fees.block_month >= CAST(
+            DATE_TRUNC('month', parameters.start_date) AS DATE
+        )
+        AND fees.block_date >= parameters.start_date
+        AND fees.tx_from = parameters.wallet_address
+    GROUP BY fees.block_date
 ),
 
-txns AS (
-  SELECT
-    DATE_TRUNC('day', block_time) AS day,
-    (gas_used * gas_price) / 1e18 AS gas_eth
-  FROM base.transactions
-  CROSS JOIN input_wallet
-  CROSS JOIN time_filter
-  WHERE transactions."from" = input_wallet.address
-    AND block_time >= time_filter.start_date
-    AND block_date >= CAST(time_filter.start_date AS DATE)
-),
-
-daily_gas AS (
-  SELECT
-    day,
-    SUM(gas_eth) AS daily_gas_eth
-  FROM txns
-  GROUP BY 1
-),
-
-cumulative_gas AS (
-  SELECT
-    day,
-    daily_gas_eth,
-    SUM(daily_gas_eth) OVER (ORDER BY day) AS cumulative_gas_eth
-  FROM daily_gas
+cumulative_gas_spend AS (
+    SELECT
+        day,
+        daily_gas_eth,
+        SUM(daily_gas_eth) OVER (
+            ORDER BY day
+            ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+        ) AS cumulative_gas_eth
+    FROM daily_gas_spend
 )
 
 SELECT
-  DATE_FORMAT(day, '%Y/%m/%d') AS date,
-  CAST(daily_gas_eth AS DECIMAL(18,6)) AS daily_gas_eth,
-  CAST(cumulative_gas_eth AS DECIMAL(18,6)) AS cumulative_gas_eth
-FROM cumulative_gas
+    DATE_FORMAT(day, '%Y/%m/%d') AS date,
+    CAST(daily_gas_eth AS DECIMAL(38, 6)) AS daily_gas_eth,
+    CAST(cumulative_gas_eth AS DECIMAL(38, 6)) AS cumulative_gas_eth
+FROM cumulative_gas_spend
 ORDER BY day DESC;
