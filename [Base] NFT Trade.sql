@@ -1,94 +1,246 @@
-WITH 
-time_filter AS (
-  SELECT 
-    CASE 
-      WHEN '{{Time Period}}' = 'Past Week'     THEN CURRENT_DATE - INTERVAL '7' day
-      WHEN '{{Time Period}}' = 'Past Month'    THEN CURRENT_DATE - INTERVAL '1' month
-      WHEN '{{Time Period}}' = 'Past 3 Months' THEN CURRENT_DATE - INTERVAL '3' month
-      WHEN '{{Time Period}}' = 'Past Year'     THEN CURRENT_DATE - INTERVAL '1' year
-      WHEN '{{Time Period}}' = 'All Time'      THEN CAST('2023-06-15' AS DATE)
-      ELSE CURRENT_DATE - INTERVAL '30' day
-    END AS start_date
+/*
+ * Query: [Base] Wallet NFT Trade Cash Flow
+ *
+ * Purpose:
+ *   Calculate ETH-denominated NFT trade cash flow for a selected wallet
+ *   on Base.
+ *
+ * Parameters:
+ *   {{wallet address:}} - Wallet address to analyze.
+ *   {{Time Period}}     - Historical period included in the analysis.
+ *
+ * Methodology:
+ *   - NFT sales are recorded as positive ETH cash flows.
+ *   - NFT purchases are recorded as negative ETH cash flows.
+ *   - USD trade values are converted to ETH using minute-level WETH prices.
+ *   - Gas is included only when the selected wallet submitted the transaction.
+ *   - Transaction gas is allocated equally across the wallet's NFT trade
+ *     rows within that transaction.
+ *
+ * Interpretation:
+ *   The result represents net NFT trading cash flow, not realized or
+ *   mark-to-market P&L. It does not include the current value or cost basis
+ *   of NFTs still held.
+ *
+ * Data sources:
+ *   nft.trades, prices.usd, base.transactions
+ *
+ * Performance note:
+ *   The legacy prices.usd table is retained because it was empirically
+ *   cheaper for this WETH-only lookup than prices.minute.
+ */
+
+WITH query_parameters AS (
+    SELECT
+        FROM_HEX(
+            LOWER(
+                REPLACE('{{wallet address:}}', '0x', '')
+            )
+        ) AS wallet_address,
+
+        CAST(
+            CASE '{{Time Period}}'
+                WHEN 'Past Week'
+                    THEN CURRENT_DATE - INTERVAL '7' DAY
+                WHEN 'Past Month'
+                    THEN CURRENT_DATE - INTERVAL '1' MONTH
+                WHEN 'Past 3 Months'
+                    THEN CURRENT_DATE - INTERVAL '3' MONTH
+                WHEN 'Past Year'
+                    THEN CURRENT_DATE - INTERVAL '1' YEAR
+                WHEN 'All Time'
+                    THEN DATE '2023-06-15'
+                ELSE CURRENT_DATE - INTERVAL '30' DAY
+            END AS DATE
+        ) AS start_date
 ),
 
-address AS (
-  SELECT FROM_HEX(REPLACE('{{wallet address:}}', '0x', '')) AS addr
+eth_minute_prices AS (
+    SELECT
+        prices.minute AS price_minute,
+        prices.price AS eth_usd_price
+    FROM prices.usd AS prices
+    CROSS JOIN query_parameters AS parameters
+    WHERE prices.blockchain = 'base'
+        AND prices.contract_address =
+            0x4200000000000000000000000000000000000006
+        AND prices.minute >= CAST(parameters.start_date AS TIMESTAMP)
 ),
 
-eth_prices AS (
-    SELECT 
-        minute,
-        price AS eth_usd_price
-    FROM prices.usd
-    WHERE blockchain = 'base'
-    AND symbol = 'WETH'
-    AND minute >= (SELECT start_date FROM time_filter)
+filtered_trades AS (
+    SELECT
+        trades.block_time AS time,
+        trades.block_date AS day,
+        trades.tx_hash,
+        trades.unique_trade_id,
+        trades.project AS marketplace,
+        trades.nft_contract_address,
+        trades.token_id,
+        trades.seller,
+        trades.amount_usd,
+        COALESCE(trades.currency_symbol, 'ETH') AS original_currency
+    FROM nft.trades AS trades
+    CROSS JOIN query_parameters AS parameters
+    WHERE trades.blockchain = 'base'
+        AND trades.block_month >= CAST(
+            DATE_TRUNC('month', parameters.start_date) AS DATE
+        )
+        AND trades.block_date >= parameters.start_date
+        AND (
+            trades.seller = parameters.wallet_address
+            OR trades.buyer = parameters.wallet_address
+        )
 ),
 
-trades_raw AS (
-  SELECT 
-    t.block_time AS time,
-    t.block_date AS day,
-    t.tx_hash,
-    t.project AS marketplace,
-    t.nft_contract_address,
-    t.token_id,
-    CASE WHEN t.seller = (SELECT addr FROM address) THEN 'SELL' ELSE 'BUY' END AS direction,
-    (CASE 
-        WHEN t.seller = (SELECT addr FROM address) THEN (t.amount_usd / NULLIF(ep.eth_usd_price, 0))
-        ELSE -(t.amount_usd / NULLIF(ep.eth_usd_price, 0)) 
-     END) AS amount_eth,
-    t.amount_usd,
-    COALESCE(p.symbol, 'ETH') AS original_currency,
-    -- Count how many trades are in this single transaction hash
-    COUNT(*) OVER (PARTITION BY t.tx_hash) AS trades_in_tx
-  FROM nft.trades t
-  LEFT JOIN tokens.erc20 p ON p.contract_address = t.currency_contract AND p.blockchain = 'base'
-  LEFT JOIN eth_prices ep ON ep.minute = DATE_TRUNC('minute', t.block_time)
-  CROSS JOIN address
-  CROSS JOIN time_filter
-  WHERE t.blockchain = 'base'
-    AND (t.seller = addr OR t.buyer = addr)
-    AND t.block_time >= time_filter.start_date
+counted_trades AS (
+    SELECT
+        *,
+        COUNT(*) OVER (
+            PARTITION BY tx_hash
+        ) AS trades_in_transaction
+    FROM filtered_trades
 ),
 
-tx_gas AS (
-  SELECT 
-    t.hash AS tx_hash,
-    (t.gas_used * t.gas_price) / 1e18 AS gas_eth
-  FROM base.transactions t
-  INNER JOIN (SELECT DISTINCT tx_hash FROM trades_raw) tr ON tr.tx_hash = t.hash
-  CROSS JOIN address
-  CROSS JOIN time_filter
-  WHERE t."from" = addr
-    AND t.block_time >= time_filter.start_date
+valued_trades AS (
+    SELECT
+        trades.day,
+        trades.time,
+        trades.tx_hash,
+        trades.unique_trade_id,
+        trades.marketplace,
+        trades.nft_contract_address,
+        trades.token_id,
+        trades.original_currency,
+        trades.trades_in_transaction,
+
+        CASE
+            WHEN trades.seller = parameters.wallet_address
+                THEN 'SELL'
+            ELSE 'BUY'
+        END AS direction,
+
+        CASE
+            WHEN trades.seller = parameters.wallet_address
+                THEN trades.amount_usd
+                    / NULLIF(prices.eth_usd_price, 0)
+            ELSE -trades.amount_usd
+                    / NULLIF(prices.eth_usd_price, 0)
+        END AS amount_eth
+    FROM counted_trades AS trades
+    CROSS JOIN query_parameters AS parameters
+    LEFT JOIN eth_minute_prices AS prices
+        ON prices.price_minute =
+            DATE_TRUNC('minute', trades.time)
 ),
 
-final_output AS (
-  SELECT 
-    tr.day,
-    tr.time,
-    tr.marketplace,
-    tr.direction,
-    tr.amount_eth,
-    -- Divide the total gas by the number of items in the tx to prevent double counting
-    COALESCE(g.gas_eth, 0) / tr.trades_in_tx AS gas_eth_spent,
-    tr.amount_eth - (COALESCE(g.gas_eth, 0) / tr.trades_in_tx) AS net_eth_flow,
-    -- Totals
-    SUM(tr.amount_eth - (COALESCE(g.gas_eth, 0) / tr.trades_in_tx)) OVER (PARTITION BY tr.day) AS daily_eth_pnl,
-    SUM(tr.amount_eth - (COALESCE(g.gas_eth, 0) / tr.trades_in_tx)) OVER (ORDER BY tr.time) AS cumulative_eth_pnl,
-    tr.nft_contract_address,
-    tr.token_id,
-    tr.original_currency,
-    tr.tx_hash
-  FROM trades_raw tr
-  LEFT JOIN tx_gas g ON g.tx_hash = tr.tx_hash
+trade_transactions AS (
+    SELECT
+        day,
+        tx_hash
+    FROM filtered_trades
+    GROUP BY
+        day,
+        tx_hash
+),
+
+transaction_gas AS (
+    SELECT
+        transactions.hash AS tx_hash,
+        transactions.block_date AS day,
+
+        (
+            CAST(transactions.gas_used AS DOUBLE)
+            * CAST(transactions.gas_price AS DOUBLE)
+        ) / 1e18 AS transaction_gas_eth
+    FROM base.transactions AS transactions
+    INNER JOIN trade_transactions AS trade_tx
+        ON trade_tx.day = transactions.block_date
+        AND trade_tx.tx_hash = transactions.hash
+    CROSS JOIN query_parameters AS parameters
+    WHERE transactions.block_date >= parameters.start_date
+        AND transactions."from" = parameters.wallet_address
+),
+
+allocated_trade_flows AS (
+    SELECT
+        trades.day,
+        trades.time,
+        trades.marketplace,
+        trades.direction,
+        trades.amount_eth,
+
+        COALESCE(gas.transaction_gas_eth, 0)
+            / trades.trades_in_transaction AS gas_eth_spent,
+
+        trades.amount_eth
+            - (
+                COALESCE(gas.transaction_gas_eth, 0)
+                / trades.trades_in_transaction
+            ) AS net_eth_flow,
+
+        trades.nft_contract_address,
+        trades.token_id,
+        trades.original_currency,
+        trades.tx_hash,
+        trades.unique_trade_id
+    FROM valued_trades AS trades
+    LEFT JOIN transaction_gas AS gas
+        ON gas.day = trades.day
+        AND gas.tx_hash = trades.tx_hash
+),
+
+trade_cash_flow AS (
+    SELECT
+        day,
+        time,
+        marketplace,
+        direction,
+        amount_eth,
+        gas_eth_spent,
+        net_eth_flow,
+
+        SUM(net_eth_flow) OVER (
+            PARTITION BY day
+        ) AS daily_eth_pnl,
+
+        SUM(net_eth_flow) OVER (
+            ORDER BY
+                time,
+                tx_hash,
+                unique_trade_id
+            ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+        ) AS cumulative_eth_pnl,
+
+        nft_contract_address,
+        token_id,
+        original_currency,
+        tx_hash
+    FROM allocated_trade_flows
 )
 
-SELECT 
-  *,
-  -- Split positive and negative values into their own columns for charting
-  CASE WHEN daily_eth_pnl > 0 THEN daily_eth_pnl ELSE 0 END AS daily_profit_eth,
-  CASE WHEN daily_eth_pnl < 0 THEN daily_eth_pnl ELSE 0 END AS daily_loss_eth
-FROM final_output 
+SELECT
+    day,
+    time,
+    marketplace,
+    direction,
+    amount_eth,
+    gas_eth_spent,
+    net_eth_flow,
+    daily_eth_pnl,
+    cumulative_eth_pnl,
+    nft_contract_address,
+    token_id,
+    original_currency,
+    tx_hash,
+
+    CASE
+        WHEN daily_eth_pnl > 0 THEN daily_eth_pnl
+        ELSE 0
+    END AS daily_profit_eth,
+
+    CASE
+        WHEN daily_eth_pnl < 0 THEN daily_eth_pnl
+        ELSE 0
+    END AS daily_loss_eth
+FROM trade_cash_flow
 ORDER BY time DESC;
